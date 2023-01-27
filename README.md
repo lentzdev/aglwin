@@ -1,4 +1,4 @@
-AGLWIN video windows manager
+# AGLWIN video windows manager
 Copyright (C) 1990-2001 Arjen G. Lentz
 
 This file is part of AGLWIN.
@@ -34,61 +34,64 @@ Unzip this archive into a aglwin\ dir under your (Xenia) development root.
 
 If you're using Borland C, check TURBOC.CFG and TLINK.CFG in bc\bin\
 TURBO.CFG should have lines like
-    -Iu:\bc\include
-    -Iu:\bc\include\sys
-    -Iu:\bc\aglwin
-    -Lu:\bc\lib
-    -Lu:\bc\aglwin
+	-Iu:\bc\include
+	-Iu:\bc\include\sys
+	-Iu:\bc\aglwin
+	-Lu:\bc\lib
+	-Lu:\bc\aglwin
 TLINK.CFG should contain something like
-    /Lu:\bc\lib;u:\bc\aglwin;
+	/Lu:\bc\lib;u:\bc\aglwin;
 
 
 In the aglwin\ directory, you will find the following stuff:
 
-README.md     This file
-LICENSE.md    The GNU General Public License
+- README.md     This file
+- LICENSE.md    The GNU General Public License
 
-MAKELIB.BAT   Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
-MAKEFILE.DOS  Generate aglwin library using Borland C and Turbo/Microsoft Link.
+- MAKELIB.BAT   Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
+- MAKEFILE.DOS  Generate aglwin library using Borland C and Turbo/Microsoft Link.
 Also DOS dependent win_pctc.cas, mouse.h, mouse.cas, far.h, far.c, key.asm
+
 The stuff is clean for BC 3.1, you may be able to use BC 5 which is now free
 for download from borland.com, but this has not been tested.
 The make utility used is NDMAKE 4.3 or 4.5, which is very unix-alike; don't be
 using the crappy Borland make tool unless you want to rewrite the makefile.
 
-win_nt.c      Unfinished for win32 port, works but not stable.
+- win_nt.c      Unfinished for win32 port, works but not stable.
 
-win_os2.c     OS/2 dependencies
-aglwin2.def   OS/2 DLL defs
-Using BC/2 1.0 you should get a clean compile; create a aglwin2.dll
+- win_os2.c     OS/2 dependencies
+- aglwin2.def   OS/2 DLL defs
+- Using BC/2 1.0 you should get a clean compile; create a aglwin2.dll
 
-WAT.CMD       Watcom C alternative compile script for OS/2 instead of BC/2 1.0
-WATL.CMD      Watcom C DLL link script for OS/2 to follow WATC.CMD
+- WAT.CMD       Watcom C alternative compile script for OS/2 instead of BC/2 1.0
+- WATL.CMD      Watcom C DLL link script for OS/2 to follow WATC.CMD
 
-test1.c       Test: keyboard input
-test2.c       Test: line drawing
+- test1.c       Test: keyboard input
+- test2.c       Test: line drawing
 
-window.h      Main include file
-2types.h      Useful defs, sometimes used in other progs without aglwin
+- window.h      Main include file
+- 2types.h      Useful defs, sometimes used in other progs without aglwin
 
-window.c      Main file
-wprint.c      Print routines
-winput.c      Input routnes
-win_menu.c    Menu and select windows
-win_menu.h    Definitions for win_menu.c
-con_emu.c     Console emulation routines
-key_emu.c     Keyboard emulation routines
-win_keys.h    Keyboard definitions
+- window.c      Main file
+- wprint.c      Print routines
+- winput.c      Input routnes
+- win_menu.c    Menu and select windows
+- win_menu.h    Definitions for win_menu.c
+- con_emu.c     Console emulation routines
+- key_emu.c     Keyboard emulation routines
+- win_keys.h    Keyboard definitions
 
 
-The only thing you should need to do for a Linux port is work on win_pctc.cas
+The only thing you should need to do for a port is work on win_pctc.cas
 or perhaps easier win_os2.c, stripping out a whole lot of irrelevant stuff,
 then doing either term or X. It's pretty self-explanatory.
+
 You may even want to consider making a pipe or TCP port I/O mechanism, that
 would be a good and simple start for making Xenia a daemon process. You could
 have a single aglwin monitor utility to keep an eye on all your Xenia tasks.
 
-Note: obvious now this code is mostly of historical interest, I don't expect
+
+Note: obviously now this code is mostly of historical interest, I don't expect
 anyone will still be wanting to do a possible port like they did in 2001...
 
 
