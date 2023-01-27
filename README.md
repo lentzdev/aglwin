@@ -46,13 +46,13 @@ In the aglwin\ directory, you will find the following stuff:
 
 ## Docu
 
-- README.md     This file
-- LICENSE.md    The GNU General Public License
+- README.md	This file
+- LICENSE.md	The GNU General Public License
 
 ## DOS
 
-- MAKELIB.BAT   Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
-- MAKEFILE.DOS  Generate aglwin library using Borland C and Turbo/Microsoft Link.
+- MAKELIB.BAT	Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
+- MAKEFILE.DOS	Generate aglwin library using Borland C and Turbo/Microsoft Link.
 Also DOS dependent win_pctc.cas, mouse.h, mouse.cas, far.h, far.c, key.asm
 
 The stuff is clean for BC 3.1, you may be able to use BC 5 which is now free
@@ -62,35 +62,36 @@ using the crappy Borland make tool unless you want to rewrite the makefile.
 
 ## Win32
 
-- win_nt.c      Unfinished for win32 port, works but not stable.
+- win_nt.c	Unfinished for win32 port, works but not stable.
 
 ## OS/2
 
-- win_os2.c     OS/2 dependencies
-- aglwin2.def   OS/2 DLL defs
-- Using BC/2 1.0 you should get a clean compile; create a aglwin2.dll
+- win_os2.c	OS/2 dependencies
+- aglwin2.def	OS/2 DLL defs
 
-- WAT.CMD       Watcom C alternative compile script for OS/2 instead of BC/2 1.0
-- WATL.CMD      Watcom C DLL link script for OS/2 to follow WATC.CMD
+Using BC/2 1.0 you should get a clean compile; create a aglwin2.dll
+
+- WAT.CMD	Watcom C alternative compile script for OS/2 instead of BC/2 1.0
+- WATL.CMD	Watcom C DLL link script for OS/2 to follow WATC.CMD
 
 ## Test/examples
 
-- test1.c       Test: keyboard input
-- test2.c       Test: line drawing
+- test1.c	Test: keyboard input
+- test2.c	Test: line drawing
 
 ## Main code
 
-- window.h      Main include file
-- 2types.h      Useful defs, sometimes used in other progs without aglwin
+- window.h	Main include file
+- 2types.h	Useful defs, sometimes used in other progs without aglwin
 
-- window.c      Main file
-- wprint.c      Print routines
-- winput.c      Input routnes
-- win_menu.c    Menu and select windows
-- win_menu.h    Definitions for win_menu.c
-- con_emu.c     Console emulation routines
-- key_emu.c     Keyboard emulation routines
-- win_keys.h    Keyboard definitions
+- window.c	Main file
+- wprint.c	Print routines
+- winput.c	Input routnes
+- win_menu.c	Menu and select windows
+- win_menu.h	Definitions for win_menu.c
+- con_emu.c	Console emulation routines
+- key_emu.c	Keyboard emulation routines
+- win_keys.h	Keyboard definitions
 
 
 The only thing you should need to do for a port is work on win_pctc.cas
