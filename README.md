@@ -1,20 +1,19 @@
 # AGLWIN video windows manager
 Copyright (C) 1990-2001 Arjen G. Lentz
 
-This file is part of AGLWIN.
-AGLWIN is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+> AGLWIN is free software; you can redistribute it and/or
+> modify it under the terms of the GNU General Public License
+> as published by the Free Software Foundation; either version 2
+> of the License, or (at your option) any later version.
+> 
+> This program is distributed in the hope that it will be useful,
+> but WITHOUT ANY WARRANTY; without even the implied warranty of
+> MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+> GNU General Public License for more details.
+> 
+> You should have received a copy of the GNU General Public License
+> along with this program; if not, write to the Free Software
+> Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 
 
@@ -45,8 +44,12 @@ TLINK.CFG should contain something like
 
 In the aglwin\ directory, you will find the following stuff:
 
+## Docu
+
 - README.md     This file
 - LICENSE.md    The GNU General Public License
+
+# DOS
 
 - MAKELIB.BAT   Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
 - MAKEFILE.DOS  Generate aglwin library using Borland C and Turbo/Microsoft Link.
@@ -57,7 +60,11 @@ for download from borland.com, but this has not been tested.
 The make utility used is NDMAKE 4.3 or 4.5, which is very unix-alike; don't be
 using the crappy Borland make tool unless you want to rewrite the makefile.
 
+## Win32
+
 - win_nt.c      Unfinished for win32 port, works but not stable.
+
+## OS/2
 
 - win_os2.c     OS/2 dependencies
 - aglwin2.def   OS/2 DLL defs
@@ -66,8 +73,12 @@ using the crappy Borland make tool unless you want to rewrite the makefile.
 - WAT.CMD       Watcom C alternative compile script for OS/2 instead of BC/2 1.0
 - WATL.CMD      Watcom C DLL link script for OS/2 to follow WATC.CMD
 
+## Test/examples
+
 - test1.c       Test: keyboard input
 - test2.c       Test: line drawing
+
+## Main code
 
 - window.h      Main include file
 - 2types.h      Useful defs, sometimes used in other progs without aglwin
@@ -92,7 +103,7 @@ have a single aglwin monitor utility to keep an eye on all your Xenia tasks.
 
 
 Note: obviously now this code is mostly of historical interest, I don't expect
-anyone will still be wanting to do a possible port like they did in 2001...
+anyone will still be wanting to do a possible port like they did in 2001 :)
 
 
     -- 20 May 2001, updates 27 Jan 2023
