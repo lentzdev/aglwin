@@ -49,7 +49,7 @@ In the aglwin\ directory, you will find the following stuff:
 - README.md     This file
 - LICENSE.md    The GNU General Public License
 
-# DOS
+## DOS
 
 - MAKELIB.BAT   Call makefile for aglwin_s.lib or aglwin_l.lib (Xenia uses large)
 - MAKEFILE.DOS  Generate aglwin library using Borland C and Turbo/Microsoft Link.
