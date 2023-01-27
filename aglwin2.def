@@ -1,0 +1,118 @@
+LIBRARY AGLWIN2 INITINSTANCE
+
+DESCRIPTION 'AGL Windowing DLL - Copyright (C) 1990-2001 Arjen G. Lentz'
+;
+; default data seg (DGROUP) is unique for each process.
+DATA    MULTIPLE NONSHARED READWRITE LOADONCALL
+
+CODE    LOADONCALL EXECUTEREAD NOIOPL NONCONFORMING
+
+PROTMODE
+SEGMENTS
+   _TEXT CLASS 'CODE' SHARED READONLY NONDISCARDABLE
+
+
+EXPORTS
+    WIN_INIT                       @1
+    WIN_DEINIT                     @2
+    WIN_IDLE                       @3
+    WIN_SETIDLE                    @4
+    WIN_CREATE                     @5
+    WIN_OPEN                       @6
+    WIN_BOXOPEN                    @7
+    WIN_CLOSE                      @8
+    WIN_HIDE                       @9
+    WIN_SETTOP                     @10
+    WIN_SETCONEMU                  @11
+    WIN_GETCONEMU                  @12
+    WIN_SETKEYEMU                  @13
+    WIN_GETKEYEMU                  @14
+    WIN_SETCUR                     @15
+    WIN_GETCUR                     @16
+    WIN_SETRANGE                   @17
+    WIN_GETRANGE                   @18
+    WIN_CLS                        @19
+    WIN_CLRBOS                     @20
+    WIN_CLREOS                     @21
+    WIN_CLRBOL                     @22
+    WIN_CLREOL                     @23
+    WIN_SCROLLUP                   @24
+    WIN_SCROLLDOWN                 @25
+    WIN_INSLINE                    @26
+    WIN_DELLINE                    @27
+    WIN_SETPOS                     @28
+    WIN_GETPOS                     @29
+    WIN_SETATTRIB                  @30
+    WIN_GETATTRIB                  @31
+    WIN_ADDATTRIB                  @32
+    _win_line                      @33
+    WIN_FILL                       @34
+    WIN_PUTC                       @35
+    WIN_PUTS                       @36
+    WIN_XYPUTS                     @37
+    _win_maxhor                    @38
+    _win_maxver                    @39
+    _num_windows                   @40
+    _windows                       @41
+    _wp                            @42
+    _win_idx                       @43
+    _win_stack                     @44
+    _win_st_top                    @45
+    _win_tpl                       @46
+    _win_mouse                     @47
+    CON_PUTS                       @48
+    WIN_KEYPUTC                    @49
+    WIN_KEYPUTS                    @50
+    WIN_KEYPUSH                    @51
+    WIN_KEYRESET                   @52
+    WIN_KEYPURGE                   @53
+    WIN_KEYSCAN                    @54
+    WIN_KEYGETC                    @55
+    _win_printf                    @56
+    _win_xyprintf                  @57
+    _win_input                     @58
+    WIN_MENU                       @59
+    WIN_SELECT                     @60
+    SCR_INIT                       @61
+    SCR_DEINIT                     @62
+    SCR_SAVESTATE                  @63
+    SCR_RESTORESTATE               @64
+    SCR_BLANK                      @65
+    SCR_UNBLANK                    @66
+    SCR_BELL                       @67
+    SCR_UPDATE                     @68
+    SCR_SCROLLUP                   @69
+    SCR_SCROLLDOWN                 @70
+    SCR_SETCUR                     @71
+    SCR_SETPOS                     @72
+    WIN_SETBUF                     @73
+    WIN_MOVEBUF                    @74
+    _win_timeslice                 @75
+    WIN_GETVDUTYPE                 @76
+    WIN_GETMTTYPE                  @77
+    WIN_SETVDUDIRECT               @78
+    KEY_FILLBUF                    @79
+    MCUR_ENABLE                    @80
+    MCUR_DISABLE                   @81
+    MCUR_SHOW                      @82
+    MCUR_HIDE                      @83
+    MCUR_RESET                     @84
+    MCUR_SETRANGE                  @85
+    MCUR_GETRANGE                  @86
+    MCUR_SETPOS                    @87
+    MCUR_GETPOS                    @88
+    MCUR_STATUS                    @89
+    MCUR_BUTTONS                   @90
+    MCUR_GETWIN                    @91
+    MCUR_GETWINPOS                 @92
+    MCUR_GETCURPOS                 @93
+
+    _line_ascii                    @94
+    _line_table                    @95
+    _line_ascii2                   @96
+    _line_table2                   @97
+    _line_set2                     @98
+    WIN_KEYCHECK                   @99
+    WIN_INSCHAR                    @100
+    WIN_DELCHAR                    @101
+

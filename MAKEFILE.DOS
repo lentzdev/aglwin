@@ -1,0 +1,56 @@
+# AGLWIN video windows manager
+# Copyright (C) 1990-2001 Arjen G. Lentz
+#
+# This file is part of AGLWIN.
+# AGLWIN is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+
+#
+CFLAGS = -c -m$(MODEL) -n$(MODEL) -f- -C -d -w+ -H=AGLWN_$(MODEL).SYM -O -G -Z -k- -D__PROTO__
+#For debugging/symbols:
+#CFLAGS = -c -m$(MODEL) -n$(MODEL) -f- -C -d -w+ -H=AGLWIN_$(MODEL).SYM -O -G -Z -k- -v -y -D__PROTO__
+#
+COBJS = $(MODEL)\window.obj $(MODEL)\wprintf.obj $(MODEL)\winput.obj \
+	$(MODEL)\con_emu.obj $(MODEL)\key_emu.obj $(MODEL)\win_menu.obj
+AOBJS = $(MODEL)\win_pctc.obj $(MODEL)\mouse.obj
+TOBJS = $(MODEL)\key.obj
+#
+aglwin_s.lib: $(COBJS) $(AOBJS) $(TOBJS) $(MODEL)\far.obj
+	      @if exist $*.lib del $*.lib
+	      lib $*.lib $(COBJS) $(AOBJS) $(TOBJS) $(MODEL)\far.obj,NUL
+	      @if exist $*.lib tlib $*.lib /c/e -BLABLA
+	      @if exist $*.bak del $*.bak
+
+aglwin_l.lib: $(COBJS) $(AOBJS) $(TOBJS)
+	      @if exist $*.lib del $*.lib
+	      lib $*.lib $(COBJS) $(AOBJS) $(TOBJS),NUL
+	      @if exist $*.lib tlib $*.lib /c/e -BLABLA
+	      @if exist $*.bak del $*.bak
+
+#
+$(COBJS): $*.c window.h win_keys.h win_menu.h
+	@md $(MODEL) >nul
+	bcc $(CFLAGS) $*.c
+
+$(MODEL)\far.obj: $*.c far.h
+	bcc $(CFLAGS) $*.c
+
+$(AOBJS): $*.cas window.h win_keys.h win_menu.h
+	bcc $(CFLAGS) $*.cas
+
+$(TOBJS): $*.asm
+	bcc $(CFLAGS) $*.asm
+
+# end of makefile

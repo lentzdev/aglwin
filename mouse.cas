@@ -1,0 +1,349 @@
+/* AGLMOUSE - functions for Microsoft and compatible Mouse drivers
+ * Copyright (C) 1989-2001 Arjen G. Lentz
+ *
+ * This file is part of AGLMOUSE.
+ * AGLMOUSE is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+
+
+/* mouse.cas - Functions for Microsoft and compatible Mouse-drivers */
+#pragma inline
+/*#include <dos.h>*/
+#include "window.h"
+#define __MOUSE_MAIN_
+#include "mouse.h"
+
+
+#define FP_OFF(fp)	((unsigned)(fp))
+#define FP_SEG(fp)	((unsigned)((unsigned long)(fp) >> 16))
+#define MK_FP(seg,ofs)	((void far *) \
+			   (((unsigned long)(seg) << 16) | (unsigned)(ofs)))
+typedef unsigned char byte;
+void far *getvect (int intno);
+
+MOUSE_REGS pascal mouse_regs;
+
+
+
+/* Load ax,bx,cx,dx,es and call mouse driver interrupt 33h ----------------- */
+void _win_fast mouse_int (int mousefunc)
+{
+	asm	push	es
+	asm	push	mouse_regs.es
+	asm	mov	ax, mousefunc
+	asm	mov	bx, mouse_regs.bx
+	asm	mov	cx, mouse_regs.cx
+	asm	mov	dx, mouse_regs.dx
+	asm	pop	es
+
+	asm	int	033h
+
+	asm	push	es
+	asm	mov	mouse_regs.ax, ax
+	asm	mov	mouse_regs.bx, bx
+	asm	mov	mouse_regs.cx, cx
+	asm	mov	mouse_regs.dx, dx
+	asm	pop	mouse_regs.es
+	asm	pop	es
+}
+
+
+
+/* Check mouse hardware/software: 0 = none, <>0 = number of mouse buttons -- */
+int _win_fast mouse_init (void)
+{
+	byte far *mouse_vector;
+
+	mouse_vector = (byte far *) getvect(0x33);
+	if (mouse_vector == (byte far *) 0L ||		   /* null vector    */
+	    *mouse_vector == 0xcf)			   /* points to IRET */
+	   return (0);
+	mouse_regs.ax = 0;
+	mouse_int(0);
+	if (!mouse_regs.ax)
+	   return (0);	    
+	return (mouse_regs.bx);
+}/*mouse_init()*/
+
+
+
+/* Return button states only ----------------------------------------------- */
+int _win_fast mouse_buttons (void)
+{
+	mouse_int(3);
+	return (mouse_regs.bx);
+}/*mouse_buttons()*/
+
+
+
+/* Return button states and pass back press info about specified button ----- */
+int _win_fast mouse_press (int button, int *pressed, int *horpos, int *verpos)
+{
+	mouse_regs.bx = button >> 1;
+	mouse_int(5);
+	*pressed = mouse_regs.bx;
+	*horpos  = mouse_regs.cx;
+	*verpos  = mouse_regs.dx;
+	return (mouse_regs.ax);
+}/*mouse_press()*/
+
+
+
+/* Return button states and pass back release info about specified button -- */
+int _win_fast mouse_release (int button, int *released, int *horpos, int *verpos)
+{
+	mouse_regs.bx = button >> 1;
+	mouse_int(6);
+	*released = mouse_regs.bx;
+	*horpos  = mouse_regs.cx;
+	*verpos  = mouse_regs.dx;
+	return (mouse_regs.ax);
+}/*mouse_release()*/
+
+
+
+/* Mouse cursor: 0 = hide, <>0 = show -------------------------------------- */
+void _win_fast mouse_cursor (int flag)
+{
+	mouse_int(flag ? 1 : 2);
+}/*mouse_cursor()*/
+
+
+
+/* Define software text cursor --------------------------------------------- */
+void _win_fast mouse_softtextcursor (int scrmask, int curmask)
+{
+	mouse_regs.bx = 0;
+	mouse_regs.cx = scrmask;
+	mouse_regs.dx = curmask;
+	mouse_int(0x0A);
+}/*mouse_softtextcursor()*/
+
+
+
+/* Define hardware text cursor --------------------------------------------- */
+void _win_fast mouse_hardtextcursor (int startscanline, int endscanline)
+{
+	mouse_regs.bx = 1;
+	mouse_regs.cx = startscanline;
+	mouse_regs.dx = endscanline;
+	mouse_int(0x0A);
+}/*mouse_hardtextcursor()*/
+
+
+
+/* Define graphics cursor -------------------------------------------------- */
+void _win_fast mouse_graphcursor (MOUSE_CURBITMAP *curbitmap)
+{
+	mouse_regs.es = FP_SEG((void far *) &curbitmap->scrmask);
+	mouse_regs.dx = FP_OFF((void far *) &curbitmap->scrmask);
+	mouse_regs.bx = curbitmap->horhotspot;
+	mouse_regs.cx = curbitmap->verhotspot;
+	mouse_int(9);
+}/*mouse_graphcursor()*/
+
+
+
+/* Set sensitivity in mickeys/8pixels, and double-speed threshold ---------- */
+void _win_fast mouse_sensitivity (int hormickeys, int vermickeys, int threshold)
+{
+	mouse_regs.cx = hormickeys;
+	mouse_regs.dx = vermickeys;
+	mouse_int(0x0F);
+	mouse_regs.dx = threshold;
+	mouse_int(0x13);
+}/*mouse_sensitivity()*/
+
+
+
+/* Set horizontal / vertical cursor range ---------------------------------- */
+void _win_fast mouse_window (int left, int top, int right, int bottom)
+{
+	mouse_regs.cx = left;
+	mouse_regs.dx = right;
+	mouse_int(7);
+	mouse_regs.cx = top;
+	mouse_regs.dx = bottom;
+	mouse_int(8);
+}/*mouse_window()*/
+
+
+/* Set region where mouse cursor will be disabled -------------------------- */
+void _win_fast mouse_disable (int left, int top, int right, int bottom)
+{
+	int region[4];
+
+	region[0] = left;
+	region[1] = top;
+	region[2] = right;
+	region[3] = bottom;
+
+	mouse_regs.es = FP_SEG((int far *) region);
+	mouse_regs.dx = FP_OFF((int far *) region);
+	mouse_int(0x10);
+}/*mouse_disable()*/
+
+
+
+/* Set horizontal / vertical position -------------------------------------- */
+void _win_fast mouse_gotoxy (int horpos, int verpos)
+{
+	mouse_regs.cx = horpos;
+	mouse_regs.dx = verpos;
+	mouse_int(4);
+}/*mouse_gotoxy()*/
+
+
+
+/* Return button states and pass back horizontal / vertical position ------- */
+int _win_fast mouse_wherexy (int *horpos, int *verpos)
+{
+	mouse_int(3);
+	*horpos = mouse_regs.cx;
+	*verpos = mouse_regs.dx;
+	return (mouse_regs.bx);
+}/*mouse_wherexy()*/
+
+
+
+/* Read motion counters since last call (positive is down/right) ----------- */
+void _win_fast mouse_motion (int *hormickeys, int *vermickeys)
+{
+	mouse_int(0x0B);
+	*hormickeys = mouse_regs.cx;
+	*vermickeys = mouse_regs.dx;
+}/*mouse_getmotion()*/
+
+
+
+/* Install mouse event function -------------------------------------------- */
+void _win_fast mouse_installhandler (int callmask, MOUSE_EVENTHANDLER evtfuncptr)
+{
+	mouse_regs.es = FP_SEG(evtfuncptr);
+	mouse_regs.dx = FP_OFF(evtfuncptr);
+	mouse_regs.cx = callmask;
+	mouse_int(0x0C);
+}/*mouse_installhandler()*/
+
+
+
+/* Swap mouse event functions, return oldmask and pass back old funcptr ---- */
+int _win_fast mouse_swaphandlers (int callmask, MOUSE_EVENTHANDLER evtfuncptr, MOUSE_EVENTHANDLER *oldfuncptr)
+{
+	mouse_regs.es = FP_SEG(evtfuncptr);
+	mouse_regs.dx = FP_OFF(evtfuncptr);
+	mouse_regs.cx = callmask;
+	mouse_int(0x14);
+	*oldfuncptr = MK_FP(mouse_regs.es,mouse_regs.dx);
+	return(mouse_regs.cx);
+}/*mouse_swaphandlers()*/
+
+
+
+/* Switch light pen emulation on/off --------------------------------------- */
+void _win_fast mouse_lightpen (int flag)
+{
+	mouse_int(flag ? 0x0D : 0x0E);
+}/*mouse_lightpen()*/
+
+
+
+/* Return size required to store mouse driver state ------------------------ */
+int _win_fast mouse_statesize (void)
+{
+	mouse_int(0x15);
+	return (mouse_regs.bx);
+}/*mouse_statesize()*/
+
+
+
+/* Save mouse driver state ------------------------------------------------- */
+void _win_fast mouse_savestate (MOUSE_STATEBUF statebufptr)
+{
+	mouse_regs.es = FP_SEG((void far *) statebufptr);
+	mouse_regs.dx = FP_OFF((void far *) statebufptr);
+	mouse_int(0x16);
+}/*mouse_savestate()*/
+
+
+
+/* Restore mouse driver state ---------------------------------------------- */
+void _win_fast mouse_restorestate (MOUSE_STATEBUF statebufptr)
+{
+	mouse_regs.es = FP_SEG((void far *) statebufptr);
+	mouse_regs.dx = FP_OFF((void far *) statebufptr);
+	mouse_int(0x17);
+}/*mouse_restorestate()*/
+
+
+
+/* Return mouse display page number ---------------------------------------- */
+int _win_fast mouse_getcrtpage (void)
+{
+	mouse_int(0x1E);
+	return (mouse_regs.bx);
+}/*mouse_getcrtpage()*/
+
+
+
+/* Set mouse display page number ------------------------------------------- */
+void _win_fast mouse_setcrtpage (int crtpage)
+{
+	mouse_regs.bx = crtpage;
+	mouse_int(0x1D);
+}/*mouse_setcrtpage()*/
+
+
+
+/* Graphics cursor bitmaps: hor/ver hotspot, screen/cursor mask ------------ */
+MOUSE_CURBITMAP pascal mouse_standardpointer = { -1, -1,
+	0x3fff, 0x1fff, 0x0fff, 0x07ff, 0x03ff, 0x01ff, 0x00ff, 0x007f,
+	0x003f, 0x001f, 0x01ff, 0x10ff, 0x30ff, 0xf87f, 0xf87f, 0xfc3f,
+	0x0000, 0x4000, 0x6000, 0x7000, 0x7800, 0x7c00, 0x7e00, 0x7f00,
+	0x7f80, 0x7fc0, 0x7c00, 0x4600, 0x0600, 0x0300, 0x0300, 0x0180},
+		pascal mouse_uparrow = { 5, 0,
+	0xf9ff, 0xf0ff, 0xe07f, 0xe07f, 0xc03f, 0xc03f, 0x801f, 0x801f,
+	0x000f, 0x000f, 0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff,
+	0x0000, 0x0600, 0x0f00, 0x0f00, 0x1f80, 0x1f80, 0x3fc0, 0x3fc0,
+	0x7fe0, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x0000},
+		pascal mouse_downarrow = { 5, 15,
+	0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff, 0xf0ff, 0x000f, 0x000f,
+	0x801f, 0x801f, 0xc03f, 0xc03f, 0xe07f, 0xe07f, 0xf0ff, 0xf9ff,
+	0x0000, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x7fe0,
+	0x3fc0, 0x3fc0, 0x1f80, 0x1f80, 0x0f00, 0x0f00, 0x0600, 0x0000},
+		pascal mouse_leftarrow = { 0, 3,
+	0xfe1f, 0xf01f, 0x0000, 0x0000, 0x0000, 0xf01f, 0xfe1f, 0xffff,
+	0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+	0x0000, 0x00c0, 0x07c0, 0x7ffe, 0x07c0, 0x00c0, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+		pascal mouse_rightarrow = { 15, 3,
+	0xf87f, 0xf80f, 0x0000, 0x0000, 0x0000, 0xf80f, 0xf87f, 0xffff,
+	0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+	0x0000, 0x0300, 0x03e0, 0x7ffe, 0x03e0, 0x0300, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+		pascal mouse_checkmark = { 6, 7,
+	0xfff0, 0xffe0, 0xffc0, 0xff81, 0xff03, 0x0607, 0x000f, 0x001f,
+	0xc03f, 0xf07f, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+	0x0000, 0x0006, 0x000c, 0x0018, 0x0030, 0x0060, 0x38c0, 0x1d80,
+	0x0700, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+		pascal mouse_pointinghand = { 5, 15,
+	0xe1ff, 0xe1ff, 0xe1ff, 0xe1ff, 0xe1ff, 0xe000, 0xe000, 0xe000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x1e00, 0x1200, 0x1200, 0x1200, 0x1200, 0x13ff, 0x1249, 0x1249,
+	0xf249, 0x9001, 0x9001, 0x9001, 0x8001, 0x8001, 0x8001, 0xffff};
+
+
+
+/* end of mouse.c */

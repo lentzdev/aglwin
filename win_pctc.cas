@@ -1,0 +1,1911 @@
+/* AGLWIN video windows manager
+ * Copyright (C) 1990-2001 Arjen G. Lentz
+ *
+ * This file is part of AGLWIN.
+ * AGLWIN is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+
+
+/* win_pctc.cas - DOS dependent functions */
+#pragma inline
+#include <stdlib.h>
+#include <conio.h>
+#include <bios.h>
+#include <dos.h>
+#include <conio.h>
+#include <time.h>
+#include <string.h>
+#include "window.h"
+#include "mouse.h"
+
+
+extern far void cdecl key_capture (void);
+extern far void cdecl key_release (void);
+extern far word cdecl key_getbrk  (void);
+
+
+#define VFOSSIL 0
+
+#define max(a,b)    (((a) > (b)) ? (a) : (b))
+#define min(a,b)    (((a) < (b)) ? (a) : (b))
+
+#define MICKEY_RATIO	  16 
+
+#define video_int(function)		{ _AH = function; geninterrupt(0x10); }
+#define fossil_int(function)		{ _AH = function; geninterrupt(0x14); }
+#define keyboard_int(function)		{ _AH = function; geninterrupt(0x16); } 
+#define dos_int(function)		{ _AH = function; geninterrupt(0x21); }
+#define BIOS_SETMODE	0x00		/* set video mode as passed in al    */
+#define BIOS_SETCURSOR	0x01		/* set cursor shape and size from cx */
+#define BIOS_SETPOS	0x02		/* set current curpos ver=dh hor=dl  */
+#define BIOS_GETPOS	0x03		/* get current curpos ver=dh hor=dl  */
+#define BIOS_SETPAGE	0x05		/* set active display page as in al  */
+#define BIOS_SCROLLUP	0x06		/* scroll active page up	     */
+#define BIOS_SCROLLDOWN 0x07		/* scroll active page down	     */
+#define BIOS_READCELL	0x08		/* read char+atr at cursor position  */
+#define BIOS_WRITECELL	0x09		/* write char+atr at cursor position */
+#define BIOS_WRITETTY	0x0e		/* put char in tty mode (for bell)   */
+#define BIOS_GETMODE	0x0f		/* get current video mode in al      */
+#define BIOS_SETPALETTE 0x10		/* set palette registers (EGA+)      */
+#define BIOS_WRITESTR	0x13		/* write string (BIOS after 1/10/86) */
+
+#define MODE_BW40	   0		/* Black & white, 40 columns	     */
+#define MODE_C40	   1		/* Color, 40 columns		     */
+#define MODE_BW80	   2		/* Black & white, 80 columns	     */
+#define MODE_C80	   3		/* Color, 80 columns		     */
+#define MODE_MONO	   7		/* Monochrome, 80 columns	     */
+
+#if VFOSSIL
+#define VFOS_APICODE	0x81		/* Video FOSSIL application code     */
+#define VFOS_GETINFO	   0		/* subfunction, information request  */
+#define VFOS_INIT	   1		/* initialize vfossil, get functable */
+#define VFOS_DEINIT	   2		/* deinitialize vfossil 	     */
+#endif
+
+#define FOS_KEYBOARD	0x00ff		/* Port number of keyboard (for DX)  */
+#define FOS_SIGNATURE	0x1954		/* Special FOSSIL driver's signature */
+#define FOS_INIT	0x04		/* Initialize FOSSIL, presence check */
+#define FOS_DEINIT	0x05		/* Deinitialize FOSSIL		     */
+#define FOS_KEYSCAN	0x0d		/* non-destructive keyboard scan     */
+#define FOS_KEYGETC	0x0e		/* read character from keyboard      */
+#define FOS_SETPOS	0x11		/* set cursor position on screen     */
+#define FOS_GETPOS	0x12		/* get cursor position on screen     */
+#define FOS_CONPUTC	0x13		/* write single ANSI char to screen  */
+
+#define SCR_DIRECT	0x0001		/* Direct writes to the screen	     */
+#if VFOSSIL
+#define SCR_VFOSSIL	0x0002		/* Video FOSSIL writes to the screen */
+#endif
+#define SCR_SNOWCHECK	0x0004		/* Snowchecking for old CGA cards    */
+#define SCR_ENHKEYBD	0x0008		/* Enhanced keyboard installed	     */
+#define SCR_MOUSE	0x0010		/* Mouse detected and initialized    */
+#define SCR_BLANKED	0x0020		/* Screen is currently blanked	     */
+#define SCR_STATESAVED	0x0040		/* State saved - system disabled     */
+
+enum { VDU_UNKNOWN, VDU_MONO, VDU_CGA, VDU_EGA, VDU_VGACOLOUR, VDU_VGAMONO
+};
+
+enum { MT_NONE, MT_ATBIOS, MT_DDOS, MT_DESQVIEW, MT_TOPVIEW, MT_MULTILINK,
+       MT_PCMOS, MT_WIN386, MT_WIN3, MT_WIN3E, MT_OS2
+};
+
+#if VFOSSIL
+struct _vfos_info {
+       word size;
+       word major;
+       word revision;
+       word highest;
+};
+
+struct _vfos_mode {
+       word  len;
+       byte  characteristics;
+       byte  n_colors;
+       word  n_columns;
+       word  n_rows;
+       word  reserved1;
+       word  reserved2;
+       dword reserved3;
+};
+
+struct _vfos_video {
+       word  len;
+       word  adapter;
+       word  display;
+       dword memsize;
+};
+
+struct _vfos_cur {
+       word start;
+       word end;
+       word width;
+       int  attrib;
+};
+
+#define VFOS_MAXFUNC	18		/* last func needed (write cell str) */
+#endif
+
+static SCR_PTR	scr_buf, scr_detect;	/* pointer to system's video buffer  */
+static SCR_PTR	work_buf;		/* pointer to work/blank buffer      */
+static word	scr_flags;		/* display types and writing methods */
+static byte	key_base;		/* Keyboard base func 0x00 or 0x10   */
+static word	vdu_type;		/* Display card/monitor type (VDU_.) */
+static word	mt_type;		/* MultiTasker type (0=none, MT_...) */
+static boolean	vdu_direct = true;	/* Direct of BIOS video; true=direct */
+#if VFOSSIL
+static int	(far pascal *vfos_funcs[VFOS_MAXFUNC + 1])();
+#endif
+static word	cur_normalattrib,	/* cursor shapes normal and insert   */
+		cur_insertattrib;
+static MOUSE_STATEBUF mouse_statebuf;	/* ptr to buf for saving mouse state */
+static int	hormickeys, vermickeys;
+static word	save_bp;
+
+#if VFOSSIL
+#define VioGetMode	(*vfos_funcs[0])
+#define VioSetMode	(*vfos_funcs[1])
+#define VioGetConfig	(*vfos_funcs[2])
+#define VioGetCurType	(*vfos_funcs[8])
+#define VioSetCurType	(*vfos_funcs[9])
+#define VioScrollUp	(*vfos_funcs[10])
+#define VioScrollDown	(*vfos_funcs[11])
+#define VioReadCellStr	(*vfos_funcs[12])   /* Don't use - buggy in VFOS_IBM */
+#define VioWrtCellStr	(*vfos_funcs[14])
+#define VioWrtNCell	(*vfos_funcs[18])
+#endif
+
+
+static word near _win_fast mt_detect (void)
+{			    /* Thanks to Adam Blake & Wandoo Valley Software */
+	asm mov  ah, 0x30	      /* Check for OS/2 		     */
+	asm int  21h
+	asm cmp  al, 0x0A
+	asm mov  bl, al
+	asm mov  ax, MT_OS2
+	asm jne  NoOS21x
+	asm jmp  Finish 	      /* Found OS/2 v1.x		     */
+NoOS21x:asm cmp  bl, 0x14
+	asm mov  ax, MT_OS2
+	asm jne  NoOS22x
+	asm jmp  Finish 	      /* Found OS/2 v2.x		     */
+NoOS22x:
+	asm mov  cx, 0x4445	      /* Check for DesqView		     */
+	asm mov  dx, 0x5351
+	asm mov  ax, 0x2B01
+	asm int  0x21
+	asm cmp  al, 0xFF
+	asm mov  ax, MT_DESQVIEW
+	asm jz	 NoDV
+	asm jmp  Finish 	      /* Found DesqView 		     */
+NoDV:
+	asm mov  ax, 0x1022	      /* Check for TopView		     */
+	asm xor  bx, bx
+	asm int  0x15
+	asm or	 bx, bx
+	asm mov  ax, MT_TOPVIEW
+	asm jz	 NoTV
+	asm jmp  Finish 	      /* Found TopView			     */
+NoTV:
+	asm mov  ax, 0x1600	      /* Check for Windows/386 - v3 enhanced */
+	asm int  0x2F
+	asm or	 al, al
+	asm je	 NotWin386	      /* Not Windows/386, test v3 Real mode  */
+	asm cmp  al, 0x80
+	asm je	 NotWin386	      /* Not Windows/386, test v3 Real mode  */
+
+	asm cmp  al, 0x01	      /* Check for Windows/386		     */
+	asm je	 Win386
+	asm cmp  al, 0xFF
+
+Win386:
+	asm mov  ax, MT_WIN386
+	asm jne  NoWin386	      /* NOT Found Windows/386 2.x	     */
+	asm jmp  Finish 	      /* Found Windows/386 2.x		     */
+NoWin386:
+
+	asm cmp  al, 0x03
+	asm mov  ax, MT_WIN3E
+	asm jb	 NoWin3E	      /* NOT Found Windows 3 enhanced	     */
+	asm jmp  Finish 	      /* Found Windows 3 enhanced	     */
+NoWin3E:
+
+NotWin386:
+	asm mov  ax, 0x4680	      /* Check for Windows v3.xx	     */
+	asm int  0x2F
+	asm or	 ax, ax
+	asm mov  ax, MT_WIN3
+	asm jne  NoWin3 	      /* NOT Found Windows v3.xx	     */
+	asm jmp  Finish 	      /* Found Windows v3.xx		     */
+NoWin3:
+
+	asm xor  ax, ax 	      /* Check for MultiLink		     */
+	asm mov  es, ax
+	asm mov  ax, es:[0x01FE]
+	asm or	 ax, ax
+	asm mov  ax, MT_MULTILINK
+	asm jnz  Finish 	      /* Found MultiLink		     */
+
+	asm mov  ah, 0x30	      /* Check for PC-MOS		     */
+	asm int  0x21
+	asm push ax
+	asm mov  ax, 0x3000
+	asm mov  bx, ax
+	asm mov  cx, ax
+	asm mov  dx, ax
+	asm int  0x21
+	asm pop  bx
+	asm cmp  ax, bx
+	asm mov  ax, MT_PCMOS
+	asm jnz  Finish 	      /* Found PC-MOS			     */
+
+	asm mov  ah, 0xE4	      /* Check for DoubleDos		     */
+	asm int  0x21
+	asm cmp  al, 0x01
+	asm jnz  NotDDos	      /* Not DoubleDos so far...	     */
+
+	asm mov  ax, MT_DDOS
+	asm jmp  Finish 	      /* Found DoubleDos		     */
+	asm nop
+
+NotDDos:
+	asm cmp  al, 0x02
+	asm mov  ax, MT_DDOS
+	asm jz	 Finish 	      /* Found DoubleDos on second check     */
+
+	asm mov  ax, 0xFFFF	      /* Check whats left...		     */
+	asm mov  es, ax
+	asm mov  al, es:[0x000E]
+	asm cmp  al, 0xFC
+	asm mov  ax, MT_ATBIOS
+	asm jle  Finish 	      /* Standard DOS			     */
+
+	asm xor  ax, ax 	      /* Found nothing ???		     */
+
+Finish:
+	return (_AX);
+}/*mt_detect()*/
+
+
+static int near _win_fast bios_copyright(char far *rom, char *copyright)
+{
+	while (*copyright)
+	      if (*copyright++ != *rom++) return (0);
+	return (1);
+}/*bios_copyright()*/
+
+
+#pragma saveregs
+static int near _win_fast ega_installed(void)
+{
+
+	_DI = _DI;
+	save_bp = _BP;
+	_AL = 0x30;
+	_BH = 0;
+	_DL = 0xff;
+	video_int(0x11);
+	_BP = save_bp;
+	_DL++;
+
+	if (_DL >= 25)
+	   win_maxver = _DL;
+
+	return ((unsigned char) _DL);
+}/*ega_installed()*/
+
+
+static void near _win_fast scr_getptr(void)
+{
+	if (mt_type == MT_DESQVIEW) {
+	   asm push es;
+	   _AX = FP_SEG((void far *) scr_detect);
+	   _ES = _AX;
+	   _DI = 0;
+	   video_int(0xfe);			/* DESQview virtual screen   */
+	   _AX = _ES;
+	   scr_buf = MK_FP(_AX,_DI);
+	   asm pop es;
+	}
+	else if (mt_type == MT_DDOS) {
+	   asm push es;
+	   _AX = FP_SEG((void far *) scr_detect);
+	   _ES = _AX;
+	   dos_int(0xec);			 /* DoubleDOS virtual screen */
+	   _AX = _ES;
+	   scr_buf = MK_FP(_AX,0);
+	   asm pop es;
+	}
+}/*scr_getptr()*/
+
+
+static void near _win_fast vio_movebuf(SCR_PTR dst, SCR_PTR src, int len)
+{
+	word snow = scr_flags & SCR_SNOWCHECK;
+
+	asm	push	ds
+	asm	mov	cx, len 	/* Length value into CX */
+	asm	jcxz	VRAMExit
+	asm	les	di, dst 	/* Get pointers to data area */
+	asm	lds	si, src
+
+	asm	cld			/* Setup move direction */
+	asm	cmp	si, di		/* Check for move direction */
+	asm	jae	VRAMSnowTest	/* Moving down?, then forward move ok */
+	asm	mov	ax, cx		/* Nope, then start at other end */
+	asm	dec	ax
+	asm	shl	ax, 1
+	asm	add	si, ax
+	asm	add	di, ax
+	asm	std
+
+VRAMSnowTest:
+	asm	cmp	word ptr snow, 0/* Does video card snow ? */
+	asm	jnz	VRAMStopSnow	/* Yes, wait for retrace */
+	asm	rep	movsw		/* Suppose to do both, do normal move */
+	asm	jmp	short VRAMExit	/* All done */
+
+VRAMStopSnow:
+	asm	mov	dx, 3DAh	/* Suppose to wait, Point DX to CGA status port */
+	asm	mov	ax, es		/* See if both are in video seg */
+	asm	mov	bx, ds
+	asm	cmp	ax, bx
+	asm	je	VIOStopSnow	/* Have to wait to and fro */
+
+VRAMWait4HRetrace:
+	asm	cli			/* No ints during critical section */
+VRAMSynchronize:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jc	VRAMSynchronize /* If on, wait for cycle to end */
+#else
+	asm	test	al, 0x09	/* 00001001b both hor & ver retrace! */
+	asm	jnz	VRAMSynchronize /* If videoboard does not report hor */
+					/* retrace while in ver retrace,this */
+					/* will allow several chars to be    */
+					/* stuffed in during ver vertrace!!  */
+#endif
+VRAMWaitForNext:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jnc	VRAMWaitForNext /* No, wait for it to begin */
+#else
+	asm	test	al, 0x09
+	asm	jz	VRAMWaitForNext
+#endif
+	asm	movsw			/* Move video ram word */
+	asm	sti			/* Allow interrupts */
+	asm	loop	VRAMWait4HRetrace/* Next byte */
+	asm	jmp	short VRAMExit
+
+VIOStopSnow:
+VInWait4HRetrace:
+	asm	cli			/* No ints during critical section */
+VInSynchronize:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jc	VInSynchronize	/* If on, wait for cycle to end */
+#else
+	asm	test	al, 0x09
+	asm	jnz	VInSynchronize
+#endif
+VInWaitForNext:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jnc	VInWaitForNext	/* No, wait for it to begin */
+#else
+	asm	test	al, 0x09
+	asm	jz	VInWaitForNext
+#endif
+	asm	lodsw			/* Get word from video ram */
+	asm	sti			/* Allow interrupts */
+	asm	mov	bx, ax		/* Save word */
+	asm	cli			/* No ints during critical section */
+VOutSynchronize:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jc	VOutSynchronize /* If on, wait for cycle to end */
+#else
+	asm	test	al, 0x09
+	asm	jnz	VOutSynchronize
+#endif
+VOutWaitForNext:
+	asm	in	al, dx		/* Get 6845 status */
+#if 0
+	asm	ror	al, 1		/* In horizontal retrace ? */
+	asm	jnc	VOutWaitForNext /* No, wait for it to begin */
+#else
+	asm	test	al, 0x09
+	asm	jz	VOutWaitForNext
+#endif
+	asm	mov	ax, bx		/* Get word to store */
+	asm	stosw			/* Put word in video ram */
+	asm	sti			/* Allow interrupts */
+	asm	loop	VInWait4HRetrace/* Next byte */
+
+VRAMExit:
+	asm	cld			/* Restore Direction Flag */
+	asm	pop	ds
+}/*vio_movebuf()*/
+
+
+#if VFOSSIL
+static int near _win_fast vfos_init(void)	/* try and init VFOSSIL/KFOSSIL */
+{
+	struct _vfos_info vfos_info;
+	struct _vfos_mode vfos_mode;
+
+	_DI = _DI;	 /* gone after optimization - tells TC to not use DI */
+
+	_DX = FOS_KEYBOARD;		 /* no comms, keyboard services only */
+	fossil_int(FOS_INIT);	     /* init FOSSIL driver, check if present */
+	if (_AX != FOS_SIGNATURE)		      /* njente, bad luck... */
+	   return (0);
+
+	vfos_info.size = sizeof (struct _vfos_info);  /* Video FOSSIL there? */
+	asm push es;				      /* save ES segment reg */
+	_AX = FP_SEG((void far *) &vfos_info);	      /* VFOSSIL info struct */
+	_ES = _AX;
+	_DI = FP_OFF((void far *) &vfos_info);
+	_AL = VFOS_GETINFO;			      /* Return VFOSSIL info */
+	fossil_int(VFOS_APICODE);		      /* VFOSSIL appl. code  */
+	asm pop es;				      /* restore ES seg reg  */
+	if (_AX != FOS_SIGNATURE || vfos_info.highest < VFOS_MAXFUNC)
+	   goto novfos; 			      /* no video fossil.... */
+
+	asm push es;				      /* save ES segment reg */
+	_AX = FP_SEG((void far *) vfos_funcs);	      /* VFOSSIL func table  */
+	_ES = _AX;
+	_DI = FP_OFF((void far *) vfos_funcs);
+	_CX = (VFOS_MAXFUNC + 1) * 4;		 /* 4=sizeof(far*()) bufsize */
+	_AL = VFOS_INIT;			      /* Open VFOSSIL	     */
+	fossil_int(VFOS_APICODE);		      /* VFOSSIL appl. code  */
+	asm pop es;				      /* restore ES seg reg  */
+	if (_AX != FOS_SIGNATURE || _BX < VFOS_MAXFUNC)
+	   goto nofunc;
+
+	vfos_mode.len = sizeof (struct _vfos_mode);
+	if (VioGetMode((void far *) &vfos_mode,0))
+	   goto nofunc;
+
+	if ((vfos_mode.characteristics & 0x02) ||
+	    (vfos_mode.n_columns < 80 || vfos_mode.n_rows < 25)) {
+	   vfos_mode.characteristics &= ~0x02;	       /* switch to textmode */
+	   vfos_mode.n_columns = 80;
+	   vfos_mode.n_rows    = 25;
+	   if (VioSetMode((void far *) &vfos_mode,0))
+	      goto nofunc;
+	}
+	win_maxhor = vfos_mode.n_columns;
+	win_maxver = vfos_mode.n_rows;
+
+	return (1);					   /* return success */
+
+nofunc: _AL = VFOS_DEINIT;
+	fossil_int(VFOS_APICODE);			   /* deinit vfossil */
+novfos: _DX = FOS_KEYBOARD;
+	fossil_int(FOS_DEINIT); 			    /* deinit fossil */
+nofos:	return (0);					   /* return failure */
+}/*vfos_init()*/
+#endif
+
+
+static byte near _win_fast vram_init(void)	  /* initialize direct video */
+{
+	byte oldvideomode, videomode;
+
+	video_int(BIOS_GETMODE);
+	oldvideomode = _AL;
+	switch (oldvideomode) {       /* try and select the right video mode */
+	       default: 			    /* hopefully no graphics */
+	       case MODE_BW80:
+	       case MODE_C80:
+	       case MODE_MONO: videomode = oldvideomode; break;      /* fine */
+	       case MODE_BW40: videomode = MODE_BW80; break;  /* want 80 col */
+	       case MODE_C40:  videomode = MODE_C80; break;
+	}
+	if (videomode != oldvideomode) {
+	   _AL = videomode;
+	   video_int(BIOS_SETMODE);	 /* hope they get it right this time */
+	}
+
+	video_int(BIOS_GETMODE);
+	if (_AH >= 80)
+	   win_maxhor = _AH;
+	if (_BH) {				/* active display page not 0 */
+	   _AL = 0;
+	   video_int(BIOS_SETPAGE);		       /* make active page 0 */
+	}
+
+	return (videomode);
+}/*vram_init()*/
+
+
+int _win_fast scr_init(void)			       /* init screen system */
+{
+	byte horpos, verpos;
+
+	_DI = _DI;	 /* gone after optimization - tells TC to not use DI */
+
+	scr_flags = 0;				   /* reset all screen flags */
+
+	win_maxhor = 80;			      /* default screen size */
+	win_maxver = 25;
+	vdu_type   = VDU_UNKNOWN;
+	mt_type    = mt_detect();
+
+#if VFOSSIL
+	if (vfos_init()) {			    /* Video/KeyBoard FOSSIL */
+	   struct _vfos_video vfos_video;
+	   word scrsize;
+
+	   scr_flags |= SCR_VFOSSIL;		      /* mark VFOSSIL active */
+
+	   vfos_video.len = sizeof (struct _vfos_video);    /* check for CGA */
+	   VioGetConfig((void far *) &vfos_video,0);	/* get hardware info */
+#if 0
+	   cur_normalattrib = (vfos_video.adapter == 1) ? 0x0708 : 0x0a0b;
+	   cur_insertattrib = (vfos_video.adapter == 1) ? 0x0408 : 0x070b;
+#endif
+	   cur_normalattrib = (vfos_video.adapter == 0) ? 0x0b0c : 0x0607;
+	   cur_insertattrib = (vfos_video.adapter == 0) ? 0x090c : 0x0407;
+
+	   /* now read the current screen contents into window 0 */
+	   windows->win_buf = (SCR_PTR) myfaralloc(sizeof (SCR_CELL) * win_maxhor * win_maxver);
+	   if (windows->win_buf == NIL)
+	      return (0);
+	   scrsize = win_maxhor * win_maxver * sizeof (SCR_CELL);
+	   VioReadCellStr((void far *) windows->win_buf,
+			  (void far *) &scrsize,0,0,0);
+
+	   fossil_int(FOS_GETPOS);		   /* get current cursor pos */
+	   horpos = _DL;
+	   verpos = _DH;
+	}
+	else
+#endif
+	{					  /* BIOS/Mouse/Direct Video */
+	   byte videomode;
+
+	   if (vdu_direct)
+	      scr_flags |= SCR_DIRECT;
+	   videomode = vram_init();
+
+	   scr_buf = scr_detect = MK_FP((videomode == MODE_MONO) ? 0xB000 : 0xB800,0);
+
+	   if (ega_installed()) {
+	      _AL = 0;	/* Get video display combination (VGA only) */
+	      video_int(0x1a);
+	      if (_AL != 0x1a)
+		 vdu_type = VDU_EGA;
+	      else {
+		 switch (_BL) {
+			case 0x01:	/* 01 MDA with monochrome display    */
+			     vdu_type = VDU_MONO; break;
+			case 0x02:	/* 02 CGA with colour display	     */
+			     vdu_type = VDU_CGA; break;
+			case 0x04:	/* 04 EGA with colour display	     */
+			     vdu_type = VDU_EGA; break;
+			case 0x05:	/* 05 EGA with mono display	     */
+			case 0x07:	/* 07 VGA with analog mono display   */
+			case 0x0b:	/* 0B MCGA with analog mono display  */
+			     vdu_type = VDU_VGAMONO; break;
+			default:	/* FF Unrecognized video system      */
+					/* 00 No display		     */
+					/* 03 Reserved			     */
+					/* 06 Professional graphics ctrl     */
+					/* 08 VGA with analog colour display */
+					/* 09 Reserved			     */
+					/* 0A MCGA with digital colour disp. */
+					/* 0C MCGA with analog colour disp. */
+			     vdu_type = VDU_VGACOLOUR; break;
+		 }
+	      }
+	   }
+	   else
+	      vdu_type = (videomode == MODE_MONO) ? VDU_MONO : VDU_CGA;
+
+	   if (vdu_type == VDU_CGA) {
+	      cur_normalattrib = 0x0607;	 /* only CGA has 8x8 cursor? */
+	      cur_insertattrib = 0x0407;
+	      if (!bios_copyright((char far *) 0xf000ffeaL,"COMPAQ"))
+		 scr_flags |= SCR_SNOWCHECK;   /* Snowcheck for old CGA card */
+	   }
+	   else {		    /* Mono/Herc, EGA/VGA -> enhanced cursor */
+	     if (vdu_type >= VDU_EGA) {
+		_AL = 3;
+		_BL = 1;
+		video_int(BIOS_SETPALETTE);
+	     }
+#if 0
+	     cur_normalattrib = 0x0a0b;
+	     cur_insertattrib = 0x070b;
+#endif
+	     cur_normalattrib = (videomode == MODE_MONO) ? 0x0b0c : 0x0607;
+	     cur_insertattrib = (videomode == MODE_MONO) ? 0x090c : 0x0407;
+	   }
+
+	   _BH = 0;
+	   video_int(BIOS_GETPOS);		   /* get current cursor pos */
+	   horpos = _DL;
+	   verpos = _DH;
+
+	   /* now read the current screen contents into window 0 */
+	   windows->win_buf = (SCR_PTR) myfaralloc(sizeof (SCR_CELL) * win_maxhor * win_maxver);
+	   if (windows->win_buf == NIL)
+	      return (0);
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      vio_movebuf(windows->win_buf,scr_buf,win_maxhor * win_maxver);
+	   }
+	   else {
+	      SCR_PTR  win_buf = windows->win_buf;
+
+	      asm mov  cx, 0x2000
+	      asm mov  ah, BIOS_SETCURSOR
+	      asm int  0x10
+
+	      asm les  di, [win_buf]
+	      asm cld
+	      asm xor  bh, bh			/* BH = display page  */
+	      asm xor  dh, dh			/* DH = row	      */
+nextrow:      asm xor  dl, dl			/* DL = col	      */
+	      asm xor  ch, ch
+	      asm mov  cl, [win_maxhor]
+nextcol:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm mov  ah, BIOS_READCELL
+	      asm int  0x10
+	      asm stosw
+	      asm inc  dl
+	      asm loop nextcol
+	      asm inc  dh
+	      asm cmp  dh, [win_maxver]
+	      asm jl   nextrow
+
+	      asm mov  dh, [verpos]
+	      asm mov  dl, [horpos]
+	      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+
+	      asm mov  cx, [cur_normalattrib]
+	      asm mov  ah, BIOS_SETCURSOR
+	      asm int  0x10
+	   }
+	}
+
+	windows->cur_horpos = (byte) horpos;	  /* set window 0 cursor pos */
+	windows->cur_verpos = (byte) verpos;
+
+	work_buf = (SCR_PTR) myfaralloc(sizeof (SCR_CELL) * win_maxhor * win_maxver);
+	if (work_buf == NIL)
+	   return (0);
+	win_movebuf(work_buf,windows->win_buf,win_maxhor * win_maxver);
+
+	if (*((byte far *) MK_FP(0x40,0x96)) & 0x10) {	   /* BIOS data area */
+	   scr_flags |= SCR_ENHKEYBD;
+	   key_base = 0x10;
+	}
+	else
+	   key_base = 0x00;
+
+	if (mouse_init()) {		      /* Mouse presence check / init */
+	   scr_flags |= SCR_MOUSE;
+	   hormickeys = vermickeys = 0;
+	   if (mouse_getcrtpage())
+	      mouse_setcrtpage(0);
+	}
+
+	key_capture();
+
+	return (1);
+}/*scr_init()*/
+
+
+void _win_fast scr_deinit(void) 		     /* deinit screen system */
+{
+	key_release();
+
+	if (scr_flags & SCR_STATESAVED)
+	   (void) win_restorestate();
+
+	myfarfree(work_buf);
+
+	if (scr_flags & SCR_MOUSE)
+	   mouse_init();			       /* deinitialize MOUSE */
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   _AL = VFOS_DEINIT;			     /* deinitialize VFOSSIL */
+	   fossil_int(VFOS_APICODE);		     /* VFOSSIL appl. code   */
+	   _DX = FOS_KEYBOARD;
+	   fossil_int(FOS_DEINIT);		      /* deinitialize FOSSIL */
+	}
+#endif
+}/*scr_deinit()*/
+
+
+void _win_fast scr_savestate(void)  /* save entire screen/mouse state and reset */
+{
+	if (windows == NULL || scr_flags & SCR_STATESAVED)
+	   return;
+
+	key_release();
+
+	scr_unblank();
+
+	win_keypurge();
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(0);
+	   mouse_statebuf = (MOUSE_STATEBUF) malloc(mouse_statesize());
+	   if (mouse_statebuf != NULL)
+	      mouse_savestate(mouse_statebuf);
+	   mouse_init();
+	}
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   struct _vfos_cur vfos_cur;
+	   word scrsize = win_maxhor * win_maxver * sizeof (SCR_CELL);
+
+	   VioWrtCellStr((void far *) windows->win_buf,
+			 win_maxhor * win_maxver * sizeof (SCR_CELL),0,0,0);
+
+	   if (windows->cur_type == CUR_INSERT) {
+	      vfos_cur.start  = (cur_insertattrib >> 8) & 0x1f;
+	      vfos_cur.end    = cur_insertattrib & 0x1f;
+	      vfos_cur.attrib = 0;
+	   }
+	   else if (windows->cur_type == CUR_NONE) {
+	      vfos_cur.start = vfos_cur.end = 1;
+	      vfos_cur.attrib = -1;
+	   }
+	   else {
+	      vfos_cur.start  = (cur_normalattrib >> 8) & 0x1f;
+	      vfos_cur.end    = cur_normalattrib & 0x1f;
+	      vfos_cur.attrib = 0;
+	   }
+
+	   vfos_cur.width = 1;
+	   VioSetCurType((void far *) &vfos_cur,0);
+
+	   _DL = windows->win_left + windows->cur_left + windows->cur_horpos;
+	   _DH = windows->win_top + windows->cur_top + windows->cur_verpos;
+	   fossil_int(FOS_SETPOS);
+
+	   _AL = VFOS_DEINIT;
+	   fossil_int(VFOS_APICODE);
+	   _DX = FOS_KEYBOARD;
+	   fossil_int(FOS_DEINIT);
+	}
+	else
+#endif
+	{
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      vio_movebuf(scr_buf,windows->win_buf,win_maxhor * win_maxver);
+	   }
+	   else {
+	      SCR_PTR  win_buf = windows->win_buf;
+
+	      asm mov  cx, 0x2000
+	      asm mov  ah, BIOS_SETCURSOR
+	      asm int  0x10
+
+	      asm les  si, [win_buf]
+	      asm cld
+	      asm xor  bh, bh			/* BH = display page  */
+	      asm xor  dh, dh			/* DH = row	      */
+nextrow:      asm xor  dl, dl			/* DL = col	      */
+nextcol:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm lods WORD PTR es:[si]
+	      asm mov  bl, ah
+	      asm mov  cx, 1
+	      asm mov  ah, BIOS_WRITECELL
+	      asm int  0x10
+	      asm inc  dl
+	      asm cmp  dl, [win_maxhor]
+	      asm jl   nextcol
+	      asm inc  dh
+	      asm cmp  dh, [win_maxver]
+	      asm jl   nextrow
+	   }
+
+	   if	   (windows->cur_type == CUR_INSERT) _CX = cur_insertattrib;
+	   else if (windows->cur_type == CUR_NONE)   _CX = 0x2000;
+	   else 				     _CX = cur_normalattrib;
+
+	   video_int(BIOS_SETCURSOR);
+
+	   _DL = windows->win_left + windows->cur_left + windows->cur_horpos;
+	   _DH = windows->win_top + windows->cur_top + windows->cur_verpos;
+	   _BH = 0;
+	   video_int(BIOS_SETPOS);
+	}
+
+	scr_flags |= SCR_STATESAVED;
+}/*scr_savestate()*/
+
+
+void _win_fast scr_restorestate(void)  /* restore previously saved screen state */
+{
+	if (windows == NULL || !(scr_flags & SCR_STATESAVED))
+	   return;
+
+	scr_flags &= ~SCR_STATESAVED;
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   vfos_init();
+	   VioWrtCellStr((void far *) work_buf,
+			 win_maxhor * win_maxver * sizeof (SCR_CELL),0,0,0);
+	}
+	else
+#endif
+	{
+	   vram_init();
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      vio_movebuf(scr_buf,work_buf,win_maxhor * win_maxver);
+	   }
+	   else {
+	      asm mov  cx, 0x2000
+	      asm mov  ah, BIOS_SETCURSOR
+	      asm int  0x10
+
+	      asm les  si, [work_buf]
+	      asm cld
+	      asm xor  bh, bh			/* BH = display page  */
+	      asm xor  dh, dh			/* DH = row	      */
+nextrow:      asm xor  dl, dl			/* DL = col	      */
+nextcol:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm lods WORD PTR es:[si]
+	      asm mov  bl, ah
+	      asm mov  cx, 1
+	      asm mov  ah, BIOS_WRITECELL
+	      asm int  0x10
+	      asm inc  dl
+	      asm cmp  dl, [win_maxhor]
+	      asm jl   nextcol
+	      asm inc  dh
+	      asm cmp  dh, [win_maxver]
+	      asm jl   nextrow
+	   }
+
+	   if (vdu_type >= VDU_EGA) {
+	      _AL = 3;
+	      _BL = 1;
+	      video_int(BIOS_SETPALETTE);
+	   }
+	}
+
+	scr_setcur();
+	scr_setpos();
+
+	if (scr_flags & SCR_MOUSE) {
+	   if (!mouse_init()) {
+	      scr_flags &= ~SCR_MOUSE;
+	      memset(win_mouse,0,sizeof (WIN_MOUSE));
+	   }
+	   else if (mouse_statebuf != NULL) {
+	      mouse_restorestate(mouse_statebuf);
+	      free(mouse_statebuf);
+	      hormickeys = vermickeys = 0;
+	      if ((win_mouse->status & MCUR_ENABLED) &&
+		  !(win_mouse->status & MCUR_HIDDEN))
+		 mouse_cursor(1);
+	      mcur_reset();
+	   }
+	}
+
+	win_keypurge(); 		       /* reset keyboard ring buffer */
+
+	key_capture();
+}/*scr_restorestate()*/
+
+
+void _win_fast scr_blank(void)	      /* blank system screen and hide cursor */
+{
+	SCR_CELL blankcell = 0;
+
+	if (scr_flags & (SCR_BLANKED | SCR_STATESAVED))
+	   return;
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(0);
+	}
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   struct _vfos_cur vfos_cur;
+	   word scrsize = win_maxhor * win_maxver * sizeof (SCR_CELL);
+
+	   vfos_cur.start = vfos_cur.end = vfos_cur.width = 1;
+	   vfos_cur.attrib = -1;
+	   VioSetCurType((void far *) &vfos_cur,0);
+
+	   VioWrtNCell((void far *) &blankcell,win_maxhor * win_maxver,0,0,0);
+	}
+	else
+#endif
+	{
+	   _CX = 0x2000;
+	   video_int(BIOS_SETCURSOR);
+
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      win_setbuf(scr_buf,blankcell,win_maxhor * win_maxver);
+	   }
+	   else {
+	      asm xor  bx, bx			/* BH = display page, BL=atr */
+	      asm xor  dx, dx			/* DH = row, DL = col	     */
+nextrow:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm xor  al, al
+	      asm xor  ch, ch
+	      asm mov  cl, [win_maxhor]
+	      asm mov  ah, BIOS_WRITECELL
+	      asm int  0x10
+	      asm inc  dh
+	      asm cmp  dh, [win_maxver]
+	      asm jl   nextrow
+	   }
+	}
+
+	scr_flags |= SCR_BLANKED;
+}/*scr_blank()*/
+
+
+void _win_fast scr_unblank(void)	   /* unblank system screen and restore cursor */
+{
+	if (!(scr_flags & SCR_BLANKED))
+	   return;
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   VioWrtCellStr((void far *) work_buf,
+			 win_maxhor * win_maxver * sizeof (SCR_CELL),0,0,0);
+	}
+	else
+#endif
+	{
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      vio_movebuf(scr_buf,work_buf,win_maxhor * win_maxver);
+	   }
+	   else {
+	      asm les  si, [work_buf]
+	      asm cld
+	      asm xor  bh, bh			/* BH = display page  */
+	      asm xor  dh, dh			/* DH = row	      */
+nextrow:      asm xor  dl, dl			/* DL = col	      */
+nextcol:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm lods WORD PTR es:[si]
+	      asm mov  bl, ah
+	      asm mov  cx, 1
+	      asm mov  ah, BIOS_WRITECELL
+	      asm int  0x10
+	      asm inc  dl
+	      asm cmp  dl, [win_maxhor]
+	      asm jl   nextcol
+	      asm inc  dh
+	      asm cmp  dh, [win_maxver]
+	      asm jl   nextrow
+
+	      scr_setpos();
+	   }
+	}
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(1);
+	}
+
+	scr_flags &= ~SCR_BLANKED;
+	scr_setcur();
+}/*scr_unblank()*/
+
+
+void _win_fast scr_bell(void)	      /* make bell (ASCII 07) sound one way or another */
+{
+	if (scr_flags & SCR_STATESAVED)
+	   return;
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   _AL = 7;
+	   fossil_int(FOS_CONPUTC);
+	}
+	else
+#endif
+	{
+	   if (mt_type == MT_OS2) {
+	      _AL = 7;
+	      _BH = 0;
+	      video_int(BIOS_WRITETTY);
+	   }
+	   else {
+	      sound(950);
+	      delay(250);
+	      nosound();
+	   }
+	}
+}/*scr_bell()*/
+
+
+void _win_fast scr_update(WIN_REC *wp, byte hor, byte ver, int len)
+{
+	vio_movebuf(work_buf + (wp->win_top + ver) * win_maxhor +
+			       wp->win_left + hor,
+		    wp->win_buf + ver * wp->win_horlen + hor,len);
+
+	if (scr_flags & (SCR_BLANKED | SCR_STATESAVED))
+	   return;
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+#if 0
+	      mouse_disable(wp->win_left + hor,
+			    wp->win_top + ver,
+			    wp->win_left + hor + (len % win_maxhor),
+			    wp->win_top + ver + (len / win_maxhor));
+#else
+	      mouse_cursor(0);
+#endif
+	}
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL)
+	   VioWrtCellStr((void far *) (wp->win_buf + ver * wp->win_horlen + hor),
+			 len * sizeof (SCR_CELL),
+			 (word) (wp->win_top + ver),
+			 (word) (wp->win_left + hor),0);
+	else
+#endif
+	{
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      vio_movebuf(scr_buf + (wp->win_top + ver) * win_maxhor +
+				    wp->win_left + hor,
+			  wp->win_buf + ver * wp->win_horlen + hor,len);
+	   }
+	   else {
+	      SCR_PTR win_buf = wp->win_buf + ver * wp->win_horlen + hor;
+	      byte    row = wp->win_top + ver,
+		      col = wp->win_left + hor;
+
+	      asm xor  bh, bh			/* BH = display page  */
+	      asm mov  ah, BIOS_GETPOS
+	      asm int  0x10
+	      asm push dx
+
+	      asm les  si, [win_buf]
+	      asm cld
+	      asm mov  dh, [row]		/* DH = row	      */
+nextrow:      asm mov  dl, [col]		/* DL = col	      */
+nextcol:      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	      asm lods WORD PTR es:[si]
+	      asm mov  bl, ah
+	      asm mov  cx, 1
+	      asm mov  ah, BIOS_WRITECELL
+	      asm int  0x10
+	      asm dec  [WORD PTR len]
+	      asm jz   fini
+	      asm inc  dl
+	      asm cmp  dl, [win_maxhor]
+	      asm jl   nextcol
+	      asm inc  dh
+	      asm jmp  nextrow
+
+fini:	      asm pop  dx
+	      asm mov  ah, BIOS_SETPOS
+	      asm int  0x10
+	   }
+	}
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(1);
+	}
+}/*scr_update()*/
+
+
+#if 0
+void _win_fast scr_move(byte tohor, byte tover, byte fromhor, byte fromver, int len)
+{
+	win_movebuf(work_buf + tover * win_maxhor + tohor,
+		    work_buf + fromver * win_maxhor + fromhor,len);
+
+	if (!(scr_flags & (SCR_BLANKED | SCR_STATESAVED))) {
+	   if (scr_flags & SCR_MOUSE) {
+	      if ((win_mouse->status & MCUR_ENABLED) &&
+		  !(win_mouse->status & MCUR_HIDDEN))
+#if 0
+		 mouse_disable(min(fromhor,tohor),
+			       min(fromver,tover),
+			       max(fromhor,tohor) + (len % win_maxhor),
+			       max(fromver,tover) + (len / win_maxhor));
+#else
+		 mouse_cursor(0);
+#endif
+	   }
+
+#if VFOSSIL
+	   if (scr_flags & SCR_VFOSSIL) {
+	      VioWrtCellStr((void far *) (work_buf + tover * win_maxhor + tohor),
+			    len * sizeof (SCR_CELL),
+			    (word) tover,(word) tohor,0);
+	   }
+	   else
+#endif
+	   {
+	      if (scr_flags & SCR_DIRECT) {
+		 scr_getptr();
+		 vio_movebuf(scr_buf + tover * win_maxhor + tohor,
+			     work_buf + tover * win_maxhor + tohor,len);
+	      }
+	      else {
+		 SCR_PTR win_buf = work_buf + tover * win_maxhor + tohor;
+
+		 asm xor  bh, bh		   /* BH = display page  */
+		 asm mov  ah, BIOS_GETPOS
+		 asm int  0x10
+		 asm push dx
+
+		 asm les  si, win_buf
+		 asm cld
+		 asm mov  dh, tover		   /* DH = row		 */
+nextrow:	 asm mov  dl, tohor		   /* DL = col		 */
+nextcol:	 asm mov  ah, BIOS_SETPOS
+		 asm int  0x10
+		 asm lods WORD PTR es:[si]
+		 asm mov  bl, ah
+		 asm mov  cx, 1
+		 asm mov  ah, BIOS_WRITECELL
+		 asm int  0x10
+		 asm dec  [WORD PTR len]
+		 asm jz   fini
+		 asm inc  dl
+		 asm cmp  dl, [win_maxhor]
+		 asm jl   nextcol
+		 asm inc  dh
+		 asm jmp  nextrow
+
+fini:		 asm pop  dx
+		 asm mov  ah, BIOS_SETPOS
+		 asm int  0x10
+	      }
+	   }
+
+	   if (scr_flags & SCR_MOUSE) {
+	      if ((win_mouse->status & MCUR_ENABLED) &&
+		  !(win_mouse->status & MCUR_HIDDEN))
+		 mouse_cursor(1);
+	   }
+	}
+}/*scr_move()*/
+#endif
+
+
+void _win_fast scr_scrollup (byte left, byte top, byte width, byte depth,
+			     byte lines, byte fillattrib)
+{
+	SCR_CELL c = ((word) fillattrib << 8) | (byte) ' ';
+	byte ver;
+
+	if (width == win_maxhor) {
+	   win_movebuf(work_buf + top * win_maxhor,
+		       work_buf + (top + lines) * win_maxhor,
+		       width * (depth - lines));
+	   win_setbuf(work_buf + ((top + depth) - lines) * win_maxhor,c,width * lines);
+	}
+	else {
+	   for (ver = top; ver <= (top + (depth - 1)) - lines; ver++)
+	       win_movebuf(work_buf + ver * win_maxhor + left,
+			   work_buf + (ver + lines) * win_maxhor + left,
+			   width);
+	   for (ver = (top + depth) - lines; ver < top + depth; ver++)
+	       win_setbuf(work_buf + ver * win_maxhor + left,c,width);
+	}
+
+	if (scr_flags & (SCR_BLANKED | SCR_STATESAVED))
+	   return;
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+#if 0
+	      mouse_disable(min(fromhor,tohor),
+			    min(fromver,tover),
+			    max(fromhor,tohor) + (len % win_maxhor),
+			    max(fromver,tover) + (len / win_maxhor));
+#else
+	      mouse_cursor(0);
+#endif
+	}
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   VioScrollUp(top,left,(top + depth) - 1,(left + width) - 1,
+		       lines,&c,0);
+	}
+	else
+#endif
+	{
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      if (width == win_maxhor) {
+		 vio_movebuf(scr_buf + top * win_maxhor,
+			     work_buf + top * win_maxhor,
+			     width * depth);
+	      }
+	      else {
+		 for (ver = top; ver <= top + (depth - 1); ver++)
+		     vio_movebuf(scr_buf + ver * win_maxhor + left,
+				 work_buf + ver * win_maxhor + left,
+				 width);
+	      }
+	   }
+	   else {
+	      save_bp = _BP;
+
+	      asm mov  ch, [top]
+	      asm mov  cl, [left]
+	      asm mov  dx, cx
+	      asm add  dh, [depth]
+	      asm dec  dh		    /* bottom = (top + depth) - 1 */
+	      asm add  dl, [width]
+	      asm dec  dl		    /* right = (left + width) - 1 */
+	      asm mov  bh, [fillattrib]
+	      asm mov  al, [lines]
+	      asm mov  ah, BIOS_SCROLLUP
+	      asm int  0x10
+
+	      _BP = save_bp;
+	   }
+	}
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(1);
+	}
+}/*scr_scrollup()*/
+
+
+void _win_fast scr_scrolldown (byte left, byte top, byte width, byte depth,
+			       byte lines, byte fillattrib)
+{
+	SCR_CELL c = ((word) fillattrib << 8) | (byte) ' ';
+	byte ver;
+
+	if (width == win_maxhor) {
+	   win_movebuf(work_buf + (top + lines) * win_maxhor,
+		       work_buf + top * win_maxhor,
+		       width * (depth - lines));
+	   win_setbuf(work_buf + top * win_maxhor,c,width * lines);
+	}
+	else {
+	   for (ver = top + (depth - 1); ver >= top + lines; ver--)
+	       win_movebuf(work_buf + ver * win_maxhor + left,
+			   work_buf + (ver - lines) * win_maxhor + left,
+			   width);
+	   for (ver = top + lines - 1; ver >= top; ver--)
+	       win_setbuf(work_buf + ver * win_maxhor + left,c,width);
+	}
+
+	if (scr_flags & (SCR_BLANKED | SCR_STATESAVED))
+	   return;
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+#if 0
+	      mouse_disable(min(fromhor,tohor),
+			    min(fromver,tover),
+			    max(fromhor,tohor) + (len % win_maxhor),
+			    max(fromver,tover) + (len / win_maxhor));
+#else
+	      mouse_cursor(0);
+#endif
+	}
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   VioScrollDown(top,left,(top + depth) - 1,(left + width) - 1,
+			 lines,&c,0);
+	}
+	else
+#endif
+	{
+	   if (scr_flags & SCR_DIRECT) {
+	      scr_getptr();
+	      if (width == win_maxhor) {
+		 vio_movebuf(scr_buf + top * win_maxhor,
+			     work_buf + top * win_maxhor,
+			     width * depth);
+	      }
+	      else {
+		 for (ver = top; ver <= top + (depth - 1); ver++)
+		     vio_movebuf(scr_buf + ver * win_maxhor + left,
+				 work_buf + ver * win_maxhor + left,
+				 width);
+	      }
+	   }
+	   else {
+	      save_bp = _BP;
+
+	      asm mov  ch, [top]
+	      asm mov  cl, [left]
+	      asm mov  dx, cx
+	      asm add  dh, [depth]
+	      asm dec  dh		    /* bottom = (top + depth) - 1 */
+	      asm add  dl, [width]
+	      asm dec  dl		    /* right = (left + width) - 1 */
+	      asm mov  bh, [fillattrib]
+	      asm mov  al, [lines]
+	      asm mov  ah, BIOS_SCROLLDOWN
+	      asm int  0x10
+
+	      _BP = save_bp;
+	   }
+	}
+
+	if (scr_flags & SCR_MOUSE) {
+	   if ((win_mouse->status & MCUR_ENABLED) &&
+	       !(win_mouse->status & MCUR_HIDDEN))
+	      mouse_cursor(1);
+	}
+}/*scr_scrolldown()*/
+
+
+void _win_fast scr_setcur(void)      /* set cur shape/size to cur_status of top window */
+{
+	byte curtype;
+
+	if (scr_flags & (SCR_BLANKED | SCR_STATESAVED))
+	   return;
+
+	curtype = win_getwp(win_gettop())->cur_type;
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   struct _vfos_cur vfos_cur;
+
+	   if (curtype == CUR_NORMAL) {
+	      vfos_cur.start  = (cur_normalattrib >> 8) & 0x1f;
+	      vfos_cur.end    = cur_normalattrib & 0x1f;
+	      vfos_cur.attrib = 0;
+	   }
+	   else if (curtype == CUR_INSERT) {
+	      vfos_cur.start  = (cur_insertattrib >> 8) & 0x1f;
+	      vfos_cur.end    = cur_insertattrib & 0x1f;
+	      vfos_cur.attrib = 0;
+	   }
+	   else if (curtype == CUR_NONE) {
+	      vfos_cur.start = vfos_cur.end = 1;
+	      vfos_cur.attrib = -1;
+	   }
+	   else
+	      return;
+
+	   vfos_cur.width = 1;
+	   VioSetCurType((void far *) &vfos_cur,0);
+	}
+	else
+#endif
+	{
+	   if	   (curtype == CUR_NORMAL) _CX = cur_normalattrib;
+	   else if (curtype == CUR_INSERT) _CX = cur_insertattrib;
+	   else if (curtype == CUR_NONE)   _CX = 0x2000;
+	   else 			   return;
+
+	   video_int(BIOS_SETCURSOR);
+       }
+}/*scr_setcur()*/
+
+
+void _win_fast scr_setpos(void)
+{
+	WIN_REC *wp;
+
+	if (scr_flags & SCR_STATESAVED)
+	   return;
+
+	wp = win_getwp(win_gettop());
+	_DL = wp->win_left + wp->cur_left + wp->cur_horpos;
+	_DH = wp->win_top + wp->cur_top + wp->cur_verpos;
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   fossil_int(FOS_SETPOS);
+	}
+	else
+#endif
+	{
+	   _BH = 0;
+	   video_int(BIOS_SETPOS);
+	}
+}/*scr_setpos()*/
+
+
+void _win_fast win_setbuf(SCR_PTR dst, SCR_CELL c, int len)
+{
+	asm	mov	cx, len
+	asm	jcxz	win_setbuf_exit
+	asm	les	di, dst
+	asm	mov	ax, c
+	asm	cld
+	asm	rep	stosw
+win_setbuf_exit:
+	return;
+}/*win_setbuf()*/
+
+
+void _win_fast win_movebuf(SCR_PTR dst, SCR_PTR src, int len)
+{
+	asm	mov	cx, len 	/* Length value into CX */
+	asm	jcxz	win_movebuf_exit
+
+	asm	push	ds
+	asm	les	di, dst 	/* Get pointers to data area */
+	asm	lds	si, src
+
+	asm	cld			/* Setup move direction */
+	asm	cmp	si, di		/* Check for move direction */
+	asm	jae	win_movebuf_start/*Moving down? then forward move ok */
+	asm	mov	ax, cx		/* Nope, then start at other end */
+	asm	dec	ax
+	asm	shl	ax, 1
+	asm	add	si, ax
+	asm	add	di, ax
+	asm	std
+
+win_movebuf_start:
+	asm	rep	movsw
+	asm	pop	ds
+win_movebuf_exit:
+	return;
+}/*win_movebuf()*/
+
+
+void cdecl win_timeslice(void)
+{
+	switch (mt_type) {
+	       case MT_NONE:
+		    asm int  0x28
+		    break;
+
+	       case MT_ATBIOS:
+		    asm mov  ax, 0x90FC
+		    asm clc
+		    asm int  0x15
+		    break;
+
+	       case MT_DDOS:
+		    asm int  0xF4		/* DoubleDos		     */
+		    break;
+
+	       case MT_DESQVIEW:
+		    asm mov  ax, 0x1000 	/* DesqView		     */
+		    asm int  0x15
+		    break;
+
+	       case MT_TOPVIEW:
+		    asm mov  ax, 0x101A 	/* Switch to system stack    */
+		    asm int  0x15
+		    asm mov  ax, 0x1000 	/* TopView		     */
+		    asm int  0x15
+		    asm mov  ax, 0x1025 	/* Switch to program stack   */
+		    asm int  0x15
+		    break;
+
+	       case MT_MULTILINK:
+		    asm mov  ax, 0x0200 	/* MultiLink		     */
+		    asm int  0x7F
+		    break;
+
+	       case MT_PCMOS:
+		    asm mov  ax, 0x0703 	/* PC-MOS		     */
+		    asm mov  bx, 0x0001
+		    asm xor  cx, cx
+		    asm mov  dx, cx
+		    asm int  0x38		/* F-P Emulator Linkage      */
+		    break;
+
+	       case MT_WIN386:
+	       case MT_WIN3:
+	       case MT_WIN3E:
+	       case MT_OS2:
+		    asm mov  ax, 0x1680 	/* Windows 2.x, 3.x & OS/2   */
+		    asm int  0x2F
+		    break;
+
+#if 0
+	       case MT_OS2:
+		    asm mov  dx, dx
+		    asm mov  ax, 100		/* millisecs, 0just curslice */
+		    asm hlt			/* trigger OS/2 except. man. */
+		    asm db 35h,0CAh		/* Special signature	     */
+#endif
+	}
+}/*win_timeslice()*/
+
+
+word _win_fast win_getvdutype (void)
+{
+	return (vdu_type);
+}/*win_getvdutype()*/
+
+
+word _win_fast win_getmttype (void)
+{
+	return (mt_type);
+}/*win_getmttype()*/
+
+
+void _win_fast win_setvdudirect (int direct)
+{
+	vdu_direct = direct ? true : false;
+#if VFOSSIL
+	if (!(scr_flags & SCR_VFOSSIL))
+#endif
+	{
+	   if (vdu_direct) scr_flags |= SCR_DIRECT;
+	   else 	   scr_flags &= ~SCR_DIRECT;
+	}
+}/*win_setvdudirect()*/
+
+
+void _win_fast key_fillbuf(void)
+{
+	word scancode;
+
+	if (scr_flags & SCR_STATESAVED)
+	   return;
+
+#if VFOSSIL
+	if (scr_flags & SCR_VFOSSIL) {
+	   while (fossil_int(FOS_KEYSCAN), _AX != 0xffff) {
+		 scancode = _AX;
+		 if (win_keyfull()) break;
+		 if (!win_keyputc(scancode & 0xff ?
+				  scancode & 0xff : 0x100 | (scancode >> 8)))
+		    break;
+
+		 fossil_int(FOS_KEYGETC);
+	   }
+	}
+	else
+#endif
+	{
+	   if (!win_keyfull && key_getbrk())
+	      win_keyputc(Ctrl_C);
+
+	   while (!win_keyfull() && (scancode = bioskey(key_base + 1)) != 0) {
+		 if (scancode == 0xffff)
+		    win_keyputc(Ctrl_C);
+		 else if (!win_keyputc((scancode & 0xff) && (scancode & 0xff) != 0xE0 ?
+				       scancode & 0xff : 0x100 | (scancode >> 8)))
+		    break;
+		 bioskey(key_base + 0);
+	   }
+
+#if 0
+	   while (kbhit()) {
+		 scancode = bioskey(1);
+		 if (!win_keyputc(scancode & 0xff ?
+				  scancode & 0xff : 0x100 | (scancode >> 8)))
+		    break;
+		 bioskey(0);
+	   }
+#endif
+	}
+
+	if ((scr_flags & SCR_MOUSE) && !(win_mouse->status & MCUR_ENABLED) &&
+	    !win_keyfull()) {
+	   int pressed, hor, ver;
+
+	   mouse_motion(&hor,&ver);
+	   hormickeys += hor;		     vermickeys += ver;
+	   hor = hormickeys / MICKEY_RATIO;  ver = vermickeys / MICKEY_RATIO;
+	   hormickeys %= MICKEY_RATIO;	     vermickeys %= MICKEY_RATIO;
+
+	   if	   (hor < 0) while ((hor++ < 0) && win_keyputc(MKEY_LEFTMOVE));
+	   else if (hor > 0) while ((hor-- > 0) && win_keyputc(MKEY_RIGHTMOVE));
+	   if	   (ver < 0) while ((ver++ < 0) && win_keyputc(MKEY_UPMOVE));
+	   else if (ver > 0) while ((ver-- > 0) && win_keyputc(MKEY_DOWNMOVE));
+
+	   mouse_press(LEFTBUTTON,&pressed,&hor,&ver);
+	   if (pressed > 0) while ((pressed-- > 0) && win_keyputc(MKEY_LEFTBUTTON));
+	   mouse_press(RIGHTBUTTON,&pressed,&hor,&ver);
+	   if (pressed > 0) while ((pressed-- > 0) && win_keyputc(MKEY_RIGHTBUTTON));
+	}
+}/*key_fillbuf()*/
+
+
+int _win_fast mcur_enable (void)
+{
+	if (!(scr_flags & SCR_MOUSE))
+	   return (0);
+
+	if (!(win_mouse->status & MCUR_ENABLED)) {
+	   memset(win_mouse,0,sizeof (WIN_MOUSE));
+	   win_mouse->status = MCUR_ENABLED;
+	   mouse_softtextcursor(0xf0ff,0x7f00);
+	   mouse_cursor(1);
+	   mcur_setrange(1,1,win_maxhor,win_maxver);
+	   mcur_setpos(1,1);
+	   mcur_reset();
+	}
+
+	return (1);
+}/*mcur_enable()*/
+
+
+void _win_fast mcur_disable (void)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	if (!(win_mouse->status & MCUR_HIDDEN))
+	   mouse_cursor(0);
+	memset(win_mouse,0,sizeof (WIN_MOUSE));
+}/*mcur_disable()*/
+
+
+void _win_fast mcur_show (void)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	if (win_mouse->status & MCUR_HIDDEN) {
+	   mouse_cursor(1);
+	   win_mouse->status &= ~MCUR_HIDDEN;
+	}
+}/*mcur_show()*/
+
+
+void _win_fast mcur_hide (void)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	if (!(win_mouse->status & MCUR_HIDDEN)) {
+	   mouse_cursor(0);
+	   win_mouse->status |= MCUR_HIDDEN;
+	}
+}/*mcur_hide()*/
+
+
+void _win_fast mcur_reset (void)
+{
+	int dummy;
+
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	mouse_release(RIGHTBUTTON,&dummy,&dummy,&dummy);
+	mouse_release(LEFTBUTTON,&dummy,&dummy,&dummy);
+
+	win_mouse->status &= (MCUR_ENABLED | MCUR_HIDDEN);
+	win_mouse->win	      = 0;
+	win_mouse->win_horpos = win_mouse->cur_horpos = 0;
+	win_mouse->win_verpos = win_mouse->cur_verpos = 0;
+}/*mcur_reset()*/
+
+
+void _win_fast mcur_setrange (byte left, byte top, byte right, byte bottom)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	if (!left || !top || !right || !bottom ||
+	    left > right || right > win_maxhor ||
+	    top > bottom || bottom > win_maxver)
+	   return;				     /* invalid/out of range */
+
+	win_mouse->scr_left   = left   - 1;
+	win_mouse->scr_top    = top    - 1;
+	win_mouse->scr_right  = right  - 1;
+	win_mouse->scr_bottom = bottom - 1;
+	mouse_window((int) win_mouse->scr_left * 8,
+		     (int) win_mouse->scr_top * 8,
+		     (int) win_mouse->scr_right * 8,
+		     (int) win_mouse->scr_bottom * 8);
+
+	mcur_setpos(win_mouse->scr_left,win_mouse->scr_top);
+	mcur_reset();
+}/*mcur_setrange()*/
+
+
+void _win_fast mcur_getrange (byte *left, byte *top, byte *right, byte *bottom)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	*left	= win_mouse->scr_left	+ 1;
+	*top	= win_mouse->scr_top	+ 1;
+	*right	= win_mouse->scr_right	+ 1;
+	*bottom = win_mouse->scr_bottom + 1;
+}/*mcur_getrange()*/
+
+
+void _win_fast mcur_setpos (byte horpos, byte verpos)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	mouse_gotoxy((int) (horpos - 1) * 8, (int) (verpos - 1) * 8);
+	mcur_reset();
+}/*mcur_setpos()*/
+
+
+void _win_fast mcur_getpos (byte *horpos, byte *verpos)
+{
+	int hor, ver;
+
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	mouse_wherexy(&hor,&ver);
+	win_mouse->scr_horpos = hor / 8;
+	win_mouse->scr_verpos = ver / 8;
+	*horpos = win_mouse->scr_horpos + 1;
+	*verpos = win_mouse->scr_verpos + 1;
+}/*mcur_getpos()*/
+
+
+word _win_fast mcur_status (void)
+{
+	int status, leftreleases, rightreleases, horpos, verpos;
+
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return (0);
+
+	mouse_release(RIGHTBUTTON,&rightreleases,&horpos,&verpos);
+	status = mouse_release(LEFTBUTTON,&leftreleases,&horpos,&verpos);
+
+	if (leftreleases) {
+	   horpos /= 8;
+	   verpos /= 8;
+	   win_mouse->status |= MCUR_LEFTCLICK;
+	   if (leftreleases > 1) {
+	      win_mouse->status |= MCUR_DOUBLECLICK;
+	      win_mouse->scr_horpos = horpos;
+	      win_mouse->scr_verpos = verpos;
+	      win_mouse->doubletimer = time(NULL);
+	   }
+	   else if (horpos == win_mouse->scr_horpos &&
+		    verpos == win_mouse->scr_verpos &&
+		    win_mouse->doubletimer == time(NULL))
+	      win_mouse->status |= MCUR_DOUBLECLICK;
+	   else {
+	      win_mouse->scr_horpos = horpos;
+	      win_mouse->scr_verpos = verpos;
+	      win_mouse->doubletimer = time(NULL);
+	      win_mouse->status &= ~MCUR_DOUBLECLICK;
+	   }
+	}
+	else {
+	   win_mouse->status &= ~(MCUR_LEFTCLICK | MCUR_DOUBLECLICK);
+	   mouse_wherexy(&horpos,&verpos);
+	   horpos /= 8;
+	   verpos /= 8;
+	}
+
+	if (rightreleases) win_mouse->status |= MCUR_RIGHTCLICK;
+	else		   win_mouse->status &= ~MCUR_RIGHTCLICK;
+	if (status & LEFTBUTTON) win_mouse->status |= MCUR_LEFTBUTTON;
+	else			 win_mouse->status &= ~MCUR_LEFTBUTTON;
+	if (status & RIGHTBUTTON) win_mouse->status |= MCUR_RIGHTBUTTON;
+	else			  win_mouse->status &= ~MCUR_RIGHTBUTTON;
+
+	if (win_mouse->status & (MCUR_LEFTCLICK | MCUR_LEFTBUTTON)) {
+	   win_mouse->win = win_tpl[verpos * win_maxhor + horpos];
+	   win_mouse->win_horpos = horpos - windows[win_mouse->win].win_left;
+	   win_mouse->win_verpos = verpos - windows[win_mouse->win].win_top;
+	   win_mouse->cur_horpos = win_mouse->win_horpos - windows[win_mouse->win].cur_left;
+	   win_mouse->cur_verpos = win_mouse->win_verpos - windows[win_mouse->win].cur_top;
+	}
+
+	return (win_mouse->status);
+}/*mcur_status()*/
+
+
+word _win_fast mcur_buttons (void)
+{
+	int status, horpos, verpos;
+
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return (0);
+
+	status = mouse_buttons();
+
+	if (status & LEFTBUTTON) win_mouse->status |= MCUR_LEFTBUTTON;
+	else			 win_mouse->status &= ~MCUR_LEFTBUTTON;
+	if (status & RIGHTBUTTON) win_mouse->status |= MCUR_RIGHTBUTTON;
+	else			  win_mouse->status &= ~MCUR_RIGHTBUTTON;
+
+	if (win_mouse->status & MCUR_LEFTBUTTON) {
+	   mouse_wherexy(&horpos,&verpos);
+	   horpos /= 8;
+	   verpos /= 8;
+	   win_mouse->win = win_tpl[verpos * win_maxhor + horpos];
+	   win_mouse->win_horpos = horpos - windows[win_mouse->win].win_left;
+	   win_mouse->win_verpos = verpos - windows[win_mouse->win].win_top;
+	   win_mouse->cur_horpos = win_mouse->win_horpos - windows[win_mouse->win].cur_left;
+	   win_mouse->cur_verpos = win_mouse->win_verpos - windows[win_mouse->win].cur_top;
+	}
+
+	return (win_mouse->status);
+}/*mcur_buttons()*/
+
+
+WIN_IDX _win_fast mcur_getwin (void)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return (0);
+
+	return(win_mouse->win);
+}/*mcur_getwin()*/
+
+
+void _win_fast mcur_getwinpos (byte *horpos, byte *verpos)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return;
+
+	*horpos = win_mouse->win_horpos + 1;
+	*verpos = win_mouse->win_verpos + 1;
+}/*mcur_getwinpos()*/
+
+
+int _win_fast mcur_getcurpos (byte *horpos, byte *verpos)
+{
+	if (!(win_mouse->status & MCUR_ENABLED))
+	   return (0);
+
+	if (win_mouse->win_horpos >= windows[win_mouse->win].cur_left &&
+	    win_mouse->win_verpos >= windows[win_mouse->win].cur_top &&
+	    win_mouse->win_horpos <= windows[win_mouse->win].cur_right &&
+	    win_mouse->win_verpos <= windows[win_mouse->win].cur_bottom) {
+	   *horpos = win_mouse->cur_horpos + 1;
+	   *verpos = win_mouse->cur_verpos + 1;
+	   return (1);
+	}
+	else {
+	   *horpos = *verpos = 0;
+	   return (0);
+	}
+}/*mcur_getcurpos()*/
+
+
+/* end of win_pctc.cas */
